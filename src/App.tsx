@@ -14,7 +14,7 @@ import {
 
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL ||
-  "https://pacto-escarlata.cosimonepones27.workers.dev/api"
+  "https://pacto-escarlata.comosimepones27.workers.dev/api"
 ).replace(/\/$/, "");
 
 type EventItem = {
