@@ -1,9 +1,9 @@
-name = "pacto-escarlata-api"
+name = "pacto-escarlata"
 main = "worker/index.ts"
 compatibility_date = "2026-10-01"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "pacto-escarlata-db"
-database_id = "REEMPLAZAR_CON_ID_D1"
+database_id = "cbbd0f0c-46b7-48ab-9a58-3f98a95326f9"
 migrations_dir = "migrations"
