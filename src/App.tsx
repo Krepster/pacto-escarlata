@@ -23,9 +23,9 @@ function App() {
 
     fetch(`${API_BASE}/events`)
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((data: EventItem[]) => { if (Array.isArray(data) && data.length) setEvents(data); })
+      .then((data: unknown) => {if (Array.isArray(data) && data.length) {setEvents(data as EventItem[]);}})
       .catch(() => undefined);
-  }, []);
+    }, []);
 
   const closeMenu = () => setMenuOpen(false);
   const dateLabel = (value: string) => {
