@@ -12,10 +12,7 @@ import {
   X,
 } from "lucide-react";
 
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL ||
-  "https://pacto-escarlata.comosimepones27.workers.dev/api"
-).replace(/\/$/, "");
+const API_BASE = "/api";
 
 type EventItem = {
   id: number;
