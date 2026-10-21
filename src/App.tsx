@@ -6,6 +6,9 @@ import {
   CalendarDays,
   Crown,
   ExternalLink,
+  HeartPulse,
+  ChevronLeft,
+  ChevronRight,
   Menu,
   Shield,
   Swords,
@@ -14,6 +17,61 @@ import {
 } from "lucide-react";
 
 const API_BASE = "/api";
+const DISCORD_INVITE_URL = "https://discord.gg/Q2HFsZgcYQ";
+
+// Texturas originales de clase de la interfaz de WoW (no los iconos custom de SwagDog).
+// Solo las nueve clases disponibles en Classic / Forever.
+const CLASS_ICON_URLS: Record<string, string> = {
+  druid: "https://warcraft.wiki.gg/wiki/Special:FilePath/Ui-charactercreate-classes_druid.png",
+  hunter: "https://warcraft.wiki.gg/wiki/Special:FilePath/Ui-charactercreate-classes_hunter.png",
+  mage: "https://warcraft.wiki.gg/wiki/Special:FilePath/Ui-charactercreate-classes_mage.png",
+  paladin: "https://warcraft.wiki.gg/wiki/Special:FilePath/Ui-charactercreate-classes_paladin.png",
+  priest: "https://warcraft.wiki.gg/wiki/Special:FilePath/Ui-charactercreate-classes_priest.png",
+  rogue: "https://warcraft.wiki.gg/wiki/Special:FilePath/Ui-charactercreate-classes_rogue.png",
+  shaman: "https://warcraft.wiki.gg/wiki/Special:FilePath/Ui-charactercreate-classes_shaman.png",
+  warlock: "https://warcraft.wiki.gg/wiki/Special:FilePath/Ui-charactercreate-classes_warlock.png",
+  warrior: "https://warcraft.wiki.gg/wiki/Special:FilePath/Ui-charactercreate-classes_warrior.png",
+};
+
+type GuildVideo =
+  | {
+      type: "local";
+      title: string;
+      subtitle: string;
+      src: string;
+      label: string;
+    }
+  | {
+      type: "youtube";
+      title: string;
+      subtitle: string;
+      videoId: string;
+      label: string;
+    };
+
+const guildVideos: GuildVideo[] = [
+  {
+    type: "local",
+    title: "Pacto Escarlata — Nuestra aventura",
+    subtitle: "Nuestra historia en Azeroth comienza aquí.",
+    src: "/media/pacto-escarlata-intro.mp4",
+    label: "PACTO ESCARLATA · VÍDEO DESTACADO",
+  },
+  {
+    type: "youtube",
+    title: "World of Warcraft: Forever — Gameplay Trailer",
+    subtitle: "El tráiler oficial de jugabilidad publicado por Blizzard.",
+    videoId: "uQuKE0KDgiM",
+    label: "TRÁILER OFICIAL · GAMEPLAY",
+  },
+  {
+    type: "youtube",
+    title: "World of Warcraft: Forever — Deep Dive",
+    subtitle: "El equipo de desarrollo explica el mundo y los sistemas de Forever.",
+    videoId: "nQPS_QSOYCU",
+    label: "BLIZZCON 2026 · DEEP DIVE",
+  },
+];
 
 type EventItem = {
   id: number;
@@ -23,12 +81,43 @@ type EventItem = {
   description: string | null;
 };
 
+function normalizeRole(role: string): "dps" | "tank" | "heal" {
+  const value = role.trim().toLowerCase();
+  if (["tank", "tanque", "tanking"].includes(value)) return "tank";
+  if (["heal", "healer", "sanador", "sanadora", "curas", "healing"].includes(value)) return "heal";
+  return "dps";
+}
+
+function roleLabel(role: "dps" | "tank" | "heal"): string {
+  return role === "tank" ? "TANK" : role === "heal" ? "HEAL" : "DPS";
+}
+
+function normalizeClass(className: string): string {
+  const value = className.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const aliases: Record<string, string> = {
+    "guerrero": "warrior", "warrior": "warrior",
+    "paladin": "paladin", "paladín": "paladin",
+    "cazador": "hunter", "hunter": "hunter",
+    "picaro": "rogue", "rogue": "rogue",
+    "sacerdote": "priest", "priest": "priest",
+    "chaman": "shaman", "shaman": "shaman",
+    "mago": "mage", "mage": "mage",
+    "brujo": "warlock", "warlock": "warlock",
+    "druida": "druid", "druid": "druid",
+  };
+  return aliases[value] ?? value.replace(/[^a-z]/g, "");
+}
+
 function PublicSite() {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [apiOnline, setApiOnline] = useState(false);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [eventsError, setEventsError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [videoIndex, setVideoIndex] = useState(0);
+  const [roster, setRoster] = useState<Array<{ id: number; character_name: string; class_name: string; specialization?: string; role: string }>>([]);
+  const [rosterLoading, setRosterLoading] = useState(true);
+  const [rosterError, setRosterError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +179,23 @@ function PublicSite() {
     }
 
     void loadData();
+
+    fetch(`${API_BASE}/roster`)
+      .then((response) => {
+        if (!response.ok) throw new Error("Roster no disponible");
+        return response.json();
+      })
+      .then((data: unknown) => {
+        if (!Array.isArray(data)) throw new Error("Formato de roster no válido");
+        if (!cancelled) {
+          setRoster(data as Array<{ id: number; character_name: string; class_name: string; specialization?: string; role: string }>);
+          setRosterError(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) { setRoster([]); setRosterError(true); }
+      })
+      .finally(() => { if (!cancelled) setRosterLoading(false); });
 
     return () => {
       cancelled = true;
@@ -153,18 +259,20 @@ function PublicSite() {
         </button>
 
         <nav className={menuOpen ? "nav nav-open" : "nav"}>
-          <a href="#hermandad" onClick={closeMenu}>
-            La hermandad
+          <a href="#inicio" onClick={closeMenu}>
+            Inicio
           </a>
           <a href="#actividades" onClick={closeMenu}>
-            Actividades
+            Eventos
           </a>
-          <a href="#reclutamiento" onClick={closeMenu}>
-            Reclutamiento
+          <a href="#plantilla" onClick={closeMenu}>
+            Miembros
           </a>
           <a
             className="nav-cta"
-            href="#reclutamiento"
+            href={DISCORD_INVITE_URL}
+            target={DISCORD_INVITE_URL.startsWith("https://") ? "_blank" : undefined}
+            rel="noreferrer"
             onClick={closeMenu}
           >
             Únete al pacto <ArrowRight size={15} />
@@ -173,122 +281,81 @@ function PublicSite() {
       </header>
 
       <main>
-        <section className="hero" id="inicio">
+        <section className="hero hero-video" id="inicio">
           <div className="hero-backdrop" />
-
-          <div className="hero-content">
-            <div className="eyebrow">
-              <span /> ALIANZA · WOW FOREVER <span />
+          <div className="hero-video-inner">
+            <div className="section-kicker">PACTO ESCARLATA PRESENTA</div>
+            <div className="section-heading guild-gallery-heading">
+              <div>
+                <h1>World of Warcraft: <em>Forever</em></h1>
+                <p>Vídeos oficiales de Blizzard. La aventura comienza aquí.</p>
+              </div>
+              <div className="gallery-controls">
+                <button type="button" aria-label="Vídeo anterior" onClick={() => setVideoIndex((videoIndex + guildVideos.length - 1) % guildVideos.length)}><ChevronLeft size={20} /></button>
+                <span>{String(videoIndex + 1).padStart(2, "0")} / {String(guildVideos.length).padStart(2, "0")}</span>
+                <button type="button" aria-label="Vídeo siguiente" onClick={() => setVideoIndex((videoIndex + 1) % guildVideos.length)}><ChevronRight size={20} /></button>
+              </div>
             </div>
-
-            <h1>
-              La fuerza nace
-              <br />
-              de <em>nuestro pacto.</em>
-            </h1>
-
-            <p className="hero-lede">
-              Una hermandad. Muchas leyendas. Un mismo estandarte.
-            </p>
-
-            <p className="hero-text">
-              Aventuras PvE, desafíos PvP y una comunidad que siempre
-              tiene un lugar para los suyos. Forjamos nuestra historia
-              juntos, dentro y fuera de Azeroth.
-            </p>
-
-            <div className="hero-actions">
-              <a className="button button-gold" href="#reclutamiento">
-                Solicitar ingreso <ArrowRight size={17} />
-              </a>
-              <a className="button button-outline" href="#hermandad">
-                Descubrir la hermandad
-              </a>
-            </div>
-
-            <div className="hero-note">
-              <Shield size={16} /> HONOR · LEALTAD · HERMANDAD
-            </div>
-          </div>
-
-          <div className="hero-side-mark">
-            <span>FOR THE ALLIANCE</span>
-            <div className="side-line" />
-            <Shield size={33} />
-          </div>
-
-          <div className="hero-bottom">
-            <span>EST. IN AZEROTH</span>
-            <span>01 — 03</span>
-          </div>
-        </section>
-
-        <section className="intro section-wrap" id="hermandad">
-          <div className="section-kicker">01 / QUIÉNES SOMOS</div>
-
-          <div className="intro-grid">
-            <div>
-              <h2>
-                Unidos por algo
-                <br />
-                <em>más grande.</em>
-              </h2>
-            </div>
-
-            <div className="intro-copy">
-              <p>
-                Pacto Escarlata es una hermandad de la Alianza en WoW
-                Forever, construida alrededor del compañerismo, el
-                progreso y las ganas de disfrutar del juego en equipo.
-              </p>
-              <p>
-                Ya vengas a conquistar mazmorras, organizarte para PvP
-                o encontrar compañeros para tus aventuras, aquí tu
-                historia también cuenta.
-              </p>
+            <div className="guild-video-carousel" aria-live="polite">
+              <div className="guild-video-frame">
+                {guildVideos[videoIndex].type === "local" ? (
+                  <video
+                    key={guildVideos[videoIndex].src}
+                    src={guildVideos[videoIndex].src}
+                    title={guildVideos[videoIndex].title}
+                    controls
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : (
+                  <iframe
+                    key={guildVideos[videoIndex].videoId}
+                    src={`https://www.youtube-nocookie.com/embed/${guildVideos[videoIndex].videoId}`}
+                    title={guildVideos[videoIndex].title}
+                    loading="lazy"
+                    referrerPolicy="strict-origin-when-cross-origin"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                  />
+                )}
+              </div>
+              <div className="guild-video-caption">
+                <span>{guildVideos[videoIndex].label}</span>
+                <h3>{guildVideos[videoIndex].title}</h3>
+                <p>{guildVideos[videoIndex].subtitle}</p>
+                {guildVideos[videoIndex].type === "youtube" && (
+                  <a href={`https://www.youtube.com/watch?v=${guildVideos[videoIndex].videoId}`} target="_blank" rel="noreferrer">
+                    Ver en YouTube <ExternalLink size={14} />
+                  </a>
+                )}
+              </div>
+              <div className="gallery-dots">
+                {guildVideos.map((video, index) => (
+                  <button
+                    key={video.type === "local" ? video.src : video.videoId}
+                    type="button"
+                    aria-label={`Mostrar vídeo ${index + 1}: ${video.title}`}
+                    aria-current={index === videoIndex ? "true" : undefined}
+                    onClick={() => setVideoIndex(index)}
+                  />
+                ))}
+              </div>
             </div>
           </div>
-
-          <div className="values-grid">
-            <article className="value-card">
-              <Swords />
-              <span>01</span>
-              <h3>Progresión</h3>
-              <p>
-                Avanzamos juntos, aprendiendo y mejorando en cada
-                encuentro.
-              </p>
-            </article>
-
-            <article className="value-card">
-              <Shield />
-              <span>02</span>
-              <h3>Lealtad</h3>
-              <p>
-                Respeto, cooperación y apoyo entre todos los miembros.
-              </p>
-            </article>
-
-            <article className="value-card">
-              <Users />
-              <span>03</span>
-              <h3>Comunidad</h3>
-              <p>
-                Un lugar para compartir aventuras y crear nuevas
-                amistades.
-              </p>
-            </article>
-          </div>
+          <div className="hero-bottom"><span>EST. IN AZEROTH</span><span>01 — {String(guildVideos.length).padStart(2, "0")}</span></div>
         </section>
 
         <section className="events-section" id="actividades">
           <div className="section-wrap">
-            <div className="section-kicker">02 / EN EL HORIZONTE</div>
+            <div className="section-kicker">01 / PRÓXIMOS EVENTOS</div>
 
             <div className="section-heading">
               <div>
                 <h2>
-                  Nuestras <em>actividades</em>
+                  Próximos <em>eventos</em>
                 </h2>
                 <p>Siempre hay una nueva aventura por comenzar.</p>
               </div>
@@ -337,44 +404,76 @@ function PublicSite() {
           </div>
         </section>
 
-        <section
-          className="join-section section-wrap"
-          id="reclutamiento"
-        >
+        <section className="roster-section section-wrap" id="plantilla">
+          <div className="section-kicker">02 / MIEMBROS DEL PACTO</div>
+          <div className="section-heading">
+            <div>
+              <h2>Nuestros <em>miembros</em></h2>
+              <p>Personajes que forman parte de la hermandad.</p>
+            </div>
+            <span className="heading-sigil"><Users size={28} /></span>
+          </div>
+          {rosterLoading ? (
+            <p className="demo-note">Cargando la plantilla...</p>
+          ) : rosterError ? (
+            <p className="demo-note">La plantilla se mostrará aquí cuando esté configurada la conexión con el roster.</p>
+          ) : roster.length === 0 ? (
+            <p className="demo-note">Todavía no hay personajes en la plantilla. El registro se conectará al bot de Discord.</p>
+          ) : (
+            <div className="roster-table-wrap">
+              <table className="roster-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Personaje</th>
+                    <th scope="col">Rol</th>
+                    <th scope="col">Clase</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roster.map((character) => {
+                    const roleKey = normalizeRole(character.role);
+                    const classKey = normalizeClass(character.class_name);
+                    const RoleIcon = roleKey === "tank" ? Shield : roleKey === "heal" ? HeartPulse : Swords;
+                    return (
+                      <tr key={character.id}>
+                        <td className="roster-character-name">{character.character_name}</td>
+                        <td>
+                          <span className={`roster-role roster-role-${roleKey}`}>
+                            <RoleIcon size={16} aria-hidden="true" />
+                            <span>{roleLabel(roleKey)}</span>
+                          </span>
+                        </td>
+                        <td>
+                          <span className="roster-class-cell">
+                            <img
+                              className="roster-class-icon"
+                              src={CLASS_ICON_URLS[classKey] ?? ""}
+                              alt=""
+                              loading="lazy"
+                              onError={(event) => { event.currentTarget.style.visibility = "hidden"; }}
+                            />
+                            <span>{character.class_name}</span>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="join-section section-wrap" id="unete">
           <div className="join-panel">
-            <div className="join-ornament">
-              <Crown size={35} />
-            </div>
-
-            <div className="section-kicker">
-              03 / TU HISTORIA CONTINÚA AQUÍ
-            </div>
-
-            <h2>
-              El pacto está abierto.
-              <br />
-              <em>¿Te unes?</em>
-            </h2>
-
-            <p>
-              Buscamos aventureros con ganas de colaborar, compartir y
-              construir una gran hermandad. Tu clase y tu experiencia
-              no definen tu valor: lo hace tu actitud.
-            </p>
-
-            <a
-              className="button button-gold"
-              href="https://discord.com/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Contactar por Discord <ExternalLink size={16} />
+            <div className="join-ornament"><Crown size={35} /></div>
+            <div className="section-kicker">03 / TU HISTORIA CONTINÚA AQUÍ</div>
+            <h2>El pacto está abierto.<br /><em>¿Te unes?</em></h2>
+            <p>Entra en nuestro Discord para conocer a la hermandad, hablar con nosotros y dar el primer paso hacia nuevas aventuras.</p>
+            <a className="button button-gold" href={DISCORD_INVITE_URL} target={DISCORD_INVITE_URL.startsWith("https://") ? "_blank" : undefined} rel="noreferrer">
+              Únete al pacto <ExternalLink size={16} />
             </a>
 
-            <small>
-              Enlace provisional: sustituir por la invitación oficial
-              de la hermandad.
-            </small>
           </div>
         </section>
       </main>

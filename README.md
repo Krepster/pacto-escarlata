@@ -57,3 +57,35 @@ No se ha creado el repositorio remoto automáticamente. Sustituye `TU_USUARIO`.
 
 ## Estado
 La portada y el endpoint de estado son funcionales. La migración D1 crea tablas iniciales para miembros, personajes, eventos e inscripciones. Aún falta implementar autenticación, permisos, formularios persistentes y panel de administración antes de abrir el registro al público.
+
+## Cambios de la portada (revisión web)
+- El bloque «La hermandad» ahora es una galería/carrusel visual con controles y puntos de navegación.
+- Se ha eliminado el enlace duplicado «Reclutamiento». La acción principal es «Únete al pacto».
+- Se ha añadido un apartado «Plantilla» que consulta `GET /api/roster`; el bot de Discord todavía debe construirse e integrarse para registrar personajes.
+- Configura `VITE_DISCORD_INVITE_URL` con la invitación real del servidor antes de publicar. La web no puede adivinar esa URL.
+- Las imágenes de ejemplo son imágenes de ambiente fantástico externas; sustitúyelas por capturas propias o imágenes de WoW que tengas permiso para usar en `guildGallery` dentro de `src/App.tsx`.
+
+
+## Bot de Discord: registro de personajes (implementación local)
+
+El Worker incluye el endpoint de Discord Interactions `POST /api/discord/interactions` y el comando `/registrar`. Al enviar el formulario, el bot valida los datos y crea una solicitud `pending` en D1; no publica el personaje en el roster hasta que un administrador lo apruebe.
+
+### Configuración manual necesaria
+
+1. En Discord Developer Portal, abre la aplicación/bot de Pacto Escarlata y copia **Application ID**, **Public Key** y **Bot Token**. No compartas ni subas el token a Git.
+2. Define los secretos en el Worker local con Wrangler (el token del bot no se necesita para recibir interacciones):
+   ```bash
+   npx wrangler secret put DISCORD_PUBLIC_KEY
+   npx wrangler secret put DISCORD_GUILD_ID
+   ```
+   `DISCORD_GUILD_ID` puede estar ya configurado en el entorno; no lo dupliques si existe. La clave pública debe ser la de la misma aplicación de Discord.
+3. Configura la URL de interacciones en Discord Developer Portal como `https://TU-WORKER.workers.dev/api/discord/interactions`. Para pruebas locales, Discord no puede llamar directamente a `localhost`; usa un túnel HTTPS temporal o un Worker de desarrollo aislado.
+4. Registra el comando de servidor con las variables de entorno `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID` y `DISCORD_GUILD_ID` en tu terminal local: `npm run register:discord-command`. El script reemplaza los comandos de esa aplicación en ese servidor por `/registrar`; ejecútalo solo si eso es lo que quieres.
+5. Aplica la nueva migración únicamente al D1 **local** para probar: `npx wrangler d1 migrations apply pacto-escarlata-db --local`. No uses `--remote` en esta fase.
+
+### Seguridad y alcance
+
+- Las interacciones se verifican con la firma Ed25519 de Discord.
+- Solo se aceptan interacciones del servidor configurado en `DISCORD_GUILD_ID`.
+- Los registros se guardan como `pending`; los endpoints de administración existentes gestionan aprobación/rechazo.
+- No se ha desplegado el Worker, aplicado migración remota ni cambiado producción.
