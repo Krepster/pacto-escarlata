@@ -1,5 +1,6 @@
 
 import { useEffect, useState } from "react";
+import type { CSSProperties, FormEvent } from "react";
 import {
   ArrowRight,
   CalendarDays,
@@ -22,7 +23,7 @@ type EventItem = {
   description: string | null;
 };
 
-function App() {
+function PublicSite() {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [apiOnline, setApiOnline] = useState(false);
   const [eventsLoading, setEventsLoading] = useState(true);
@@ -411,4 +412,258 @@ function App() {
   );
 }
 
-export default App;
+
+type RosterRequest = {
+  id: number;
+  discord_username: string;
+  character_name: string;
+  class_name: string;
+  specialization: string;
+  role: string;
+  status: string;
+  created_at: string;
+};
+
+function AdminApp() {
+  const [checking, setChecking] = useState(true);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [requests, setRequests] = useState<RosterRequest[]>([]);
+  const [title, setTitle] = useState("");
+  const [type, setType] = useState("PvE");
+  const [startsAt, setStartsAt] = useState("");
+  const [description, setDescription] = useState("");
+
+  const apiFetch = async (path: string, init: RequestInit = {}) => {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      credentials: "same-origin",
+      headers: {
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...init.headers,
+      },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        data !== null && typeof data === "object" && "error" in data && typeof data.error === "string"
+          ? data.error
+          : `Error HTTP ${response.status}`
+      );
+    }
+    return data;
+  };
+
+  const loadAdminData = async () => {
+    const [eventData, requestData] = await Promise.all([
+      apiFetch("/events"),
+      apiFetch("/admin/roster-requests"),
+    ]);
+    setEvents(Array.isArray(eventData) ? eventData : []);
+    setRequests(Array.isArray(requestData) ? requestData : []);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/admin/session")
+      .then((data) => {
+        if (
+          !cancelled &&
+          data !== null &&
+          typeof data === "object" &&
+          "authenticated" in data &&
+          data.authenticated === true
+        ) {
+          setAuthenticated(true);
+          return loadAdminData();
+        }
+      })
+      .catch(() => {
+        // No hay una sesión activa; se muestra el formulario de acceso.
+      })
+      .catch(() => {
+        if (!cancelled) setError("No se pudieron cargar los datos del panel.");
+      })
+      .finally(() => {
+        if (!cancelled) setChecking(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const login = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await apiFetch("/admin/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      });
+      setAuthenticated(true);
+      setPassword("");
+      await loadAdminData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo iniciar sesión.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const logout = async () => {
+    setBusy(true);
+    try {
+      await apiFetch("/admin/logout", { method: "POST", body: JSON.stringify({}) });
+    } finally {
+      setAuthenticated(false);
+      setEvents([]);
+      setRequests([]);
+      setBusy(false);
+    }
+  };
+
+  const createEvent = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await apiFetch("/events", {
+        method: "POST",
+        body: JSON.stringify({
+          title: title.trim(),
+          type,
+          starts_at: new Date(startsAt).toISOString(),
+          description: description.trim(),
+        }),
+      });
+      setTitle("");
+      setStartsAt("");
+      setDescription("");
+      await loadAdminData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo crear el evento.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteEvent = async (id: number) => {
+    if (!window.confirm("¿Seguro que quieres eliminar este evento?")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await apiFetch(`/events/${id}`, { method: "DELETE" });
+      await loadAdminData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo eliminar el evento.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reviewRequest = async (id: number, action: "approve" | "reject") => {
+    const promptName = window.prompt("Nombre que aparecerá como revisor:", username || "admin");
+    if (promptName === null) return;
+    setBusy(true);
+    setError("");
+    try {
+      await apiFetch(`/admin/roster-requests/${id}/${action}`, {
+        method: "POST",
+        body: JSON.stringify({ reviewer: promptName }),
+      });
+      await loadAdminData();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo revisar la solicitud.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const panelStyle: CSSProperties = {
+    minHeight: "100vh", background: "#11110f", color: "#f4efe5",
+    padding: "clamp(20px, 4vw, 48px)", fontFamily: "inherit",
+  };
+  const cardStyle: CSSProperties = {
+    background: "#1b1a17", border: "1px solid #49402d", borderRadius: 12,
+    padding: 22, marginBottom: 20,
+  };
+  const inputStyle: CSSProperties = {
+    width: "100%", boxSizing: "border-box", padding: "12px 13px",
+    color: "#f4efe5", background: "#11110f", border: "1px solid #5b513b",
+    borderRadius: 7, marginTop: 6,
+  };
+  const buttonStyle: CSSProperties = {
+    padding: "10px 14px", borderRadius: 7, border: "1px solid #b59a5a",
+    background: "#b59a5a", color: "#171510", cursor: "pointer", fontWeight: 700,
+  };
+
+  if (checking) {
+    return <main style={panelStyle}><p>Comprobando la sesión de administrador…</p></main>;
+  }
+
+  if (!authenticated) {
+    return (
+      <main style={{ ...panelStyle, display: "grid", placeItems: "center" }}>
+        <form onSubmit={login} style={{ ...cardStyle, width: "min(100%, 420px)", boxSizing: "border-box" }}>
+          <p style={{ color: "#c5a968", letterSpacing: 2, fontSize: 12 }}>PACTO ESCARLATA / PRIVADO</p>
+          <h1 style={{ marginTop: 8 }}>Administración</h1>
+          <p style={{ color: "#b9b2a4" }}>Inicia sesión para gestionar actividades y solicitudes de ingreso.</p>
+          <label>Usuario<input autoComplete="username" required value={username} onChange={(e) => setUsername(e.target.value)} style={inputStyle} /></label>
+          <label style={{ display: "block", marginTop: 16 }}>Contraseña<input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} /></label>
+          {error && <p role="alert" style={{ color: "#ff9a8c" }}>{error}</p>}
+          <button disabled={busy} type="submit" style={{ ...buttonStyle, width: "100%", marginTop: 20 }}>{busy ? "Accediendo…" : "Entrar al panel"}</button>
+          <a href="/" style={{ display: "inline-block", marginTop: 20, color: "#c5a968" }}>← Volver a la web</a>
+        </form>
+      </main>
+    );
+  }
+
+  return (
+    <main style={panelStyle}>
+      <header style={{ display: "flex", gap: 16, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", marginBottom: 28 }}>
+        <div><p style={{ color: "#c5a968", letterSpacing: 2, fontSize: 12 }}>PACTO ESCARLATA</p><h1 style={{ margin: "6px 0" }}>Panel de administración</h1><p style={{ color: "#b9b2a4", margin: 0 }}>Eventos y solicitudes de la hermandad</p></div>
+        <button onClick={logout} disabled={busy} style={buttonStyle}>Cerrar sesión</button>
+      </header>
+      {error && <p role="alert" style={{ ...cardStyle, color: "#ff9a8c" }}>{error}</p>}
+      <section style={cardStyle}>
+        <h2>Crear actividad</h2>
+        <form onSubmit={createEvent} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14 }}>
+          <label>Título<input required maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} style={inputStyle} /></label>
+          <label>Tipo<select value={type} onChange={(e) => setType(e.target.value)} style={inputStyle}><option value="PvE">PvE</option><option value="PvP">PvP</option><option value="Social">Social</option></select></label>
+          <label>Fecha y hora<input type="datetime-local" required value={startsAt} onChange={(e) => setStartsAt(e.target.value)} style={inputStyle} /></label>
+          <label style={{ gridColumn: "1 / -1" }}>Descripción<textarea maxLength={2000} value={description} onChange={(e) => setDescription(e.target.value)} rows={3} style={inputStyle} /></label>
+          <div><button disabled={busy} type="submit" style={buttonStyle}>+ Crear actividad</button></div>
+        </form>
+      </section>
+      <section style={cardStyle}>
+        <h2>Actividades existentes</h2>
+        {events.length === 0 ? <p style={{ color: "#b9b2a4" }}>No hay actividades registradas.</p> : events.map((item) => (
+          <article key={item.id} style={{ padding: "14px 0", borderBottom: "1px solid #39352c", display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+            <div><strong>{item.title}</strong><p style={{ color: "#b9b2a4", margin: "5px 0" }}>{item.type} · {new Date(item.starts_at).toLocaleString("es-ES")}</p>{item.description && <p>{item.description}</p>}</div>
+            <button disabled={busy} onClick={() => void deleteEvent(item.id)} style={{ ...buttonStyle, background: "transparent", color: "#ff9a8c", borderColor: "#8d554e" }}>Eliminar</button>
+          </article>
+        ))}
+      </section>
+      <section style={cardStyle}>
+        <h2>Solicitudes de ingreso</h2>
+        {requests.length === 0 ? <p style={{ color: "#b9b2a4" }}>No hay solicitudes.</p> : requests.map((request) => (
+          <article key={request.id} style={{ padding: "14px 0", borderBottom: "1px solid #39352c" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div><strong>{request.character_name}</strong> <span style={{ color: "#c5a968" }}>· {request.status}</span><p style={{ margin: "5px 0", color: "#b9b2a4" }}>{request.discord_username} · {request.class_name} · {request.specialization} · {request.role}</p></div>
+              {request.status === "pending" && <div style={{ display: "flex", gap: 8, alignItems: "start" }}><button disabled={busy} onClick={() => void reviewRequest(request.id, "approve")} style={buttonStyle}>Aprobar</button><button disabled={busy} onClick={() => void reviewRequest(request.id, "reject")} style={{ ...buttonStyle, background: "transparent", color: "#ff9a8c", borderColor: "#8d554e" }}>Rechazar</button></div>}
+            </div>
+          </article>
+        ))}
+      </section>
+      <a href="/" style={{ color: "#c5a968" }}>← Volver a la web pública</a>
+    </main>
+  );
+}
+
+
+export default function App() {
+  return window.location.pathname.replace(/\/+$/, "") === "/admin" ? <AdminApp /> : <PublicSite />;
+}
