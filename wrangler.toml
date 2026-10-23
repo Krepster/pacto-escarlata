@@ -7,3 +7,9 @@ binding = "DB"
 database_name = "pacto-escarlata-db"
 database_id = "cbbd0f0c-46b7-48ab-9a58-3f98a95326f9"
 migrations_dir = "migrations"
+
+[vars]
+RAID_HELPER_SERVER_ID = "1550159253832994828"
+
+[triggers]
+crons = ["*/15 * * * *"]

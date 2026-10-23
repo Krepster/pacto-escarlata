@@ -13,6 +13,8 @@ export interface Env {
   DISCORD_BOT_TOKEN: string;
   DISCORD_REVIEW_CHANNEL_ID: string;
   DISCORD_ADMIN_ROLE_ID: string;
+  RAID_HELPER_API_KEY: string;
+  RAID_HELPER_SERVER_ID: string;
 }
 
 const SESSION_COOKIE = "__Host-pacto_admin";
@@ -288,6 +290,150 @@ const validEvent = (
   );
 };
 
+
+type RaidHelperEvent = {
+  id: string;
+  title: string;
+  description?: string;
+  startTime: number | string;
+};
+
+type RaidHelperPage = {
+  pages: number;
+  eventsOverall: number;
+  currentPage: number;
+  postedEvents: RaidHelperEvent[];
+};
+
+const fetchRaidHelperEvents = async (env: Env): Promise<RaidHelperEvent[]> => {
+  if (!env.RAID_HELPER_API_KEY || !env.RAID_HELPER_SERVER_ID) {
+    throw new Error("Falta la configuración de Raid-Helper.");
+  }
+
+  const baseUrl = `https://raid-helper.xyz/api/v4/servers/${encodeURIComponent(env.RAID_HELPER_SERVER_ID)}/events`;
+  const headers = { Authorization: env.RAID_HELPER_API_KEY };
+  const maxPages = 100;
+  const collected = new Map<string, RaidHelperEvent>();
+  let expectedPages: number | null = null;
+  let expectedTotal: number | null = null;
+
+  for (let page = 1; page <= (expectedPages ?? 1); page++) {
+    const response = await fetch(`${baseUrl}?Page=${page}`, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Raid-Helper devolvió HTTP ${response.status}.`);
+    }
+
+    const payload: unknown = await response.json();
+    if (typeof payload !== "object" || payload === null) {
+      throw new Error("Respuesta de Raid-Helper no válida.");
+    }
+
+    const data = payload as Partial<RaidHelperPage>;
+    if (
+      !Number.isInteger(data.pages) ||
+      (data.pages as number) < 1 ||
+      (data.pages as number) > maxPages ||
+      !Number.isInteger(data.eventsOverall) ||
+      (data.eventsOverall as number) < 0 ||
+      data.currentPage !== page ||
+      !Array.isArray(data.postedEvents)
+    ) {
+      throw new Error("Respuesta de Raid-Helper incompleta o mal formada.");
+    }
+
+    if (expectedPages === null) {
+      expectedPages = data.pages as number;
+      expectedTotal = data.eventsOverall as number;
+    } else if (
+      data.pages !== expectedPages ||
+      data.eventsOverall !== expectedTotal
+    ) {
+      throw new Error("La paginación de Raid-Helper cambió durante la consulta.");
+    }
+
+    for (const item of data.postedEvents) {
+      if (
+        typeof item !== "object" ||
+        item === null ||
+        typeof item.id !== "string" ||
+        !item.id.trim() ||
+        typeof item.title !== "string" ||
+        !item.title.trim() ||
+        !(typeof item.startTime === "number" || typeof item.startTime === "string") ||
+        !Number.isFinite(Number(item.startTime)) ||
+        Number(item.startTime) <= 0 ||
+        (item.description !== undefined && typeof item.description !== "string")
+      ) {
+        throw new Error("Raid-Helper devolvió un evento con campos no válidos.");
+      }
+
+      const id = item.id.trim();
+      if (collected.has(id)) {
+        throw new Error(`Raid-Helper devolvió el ID duplicado ${id}.`);
+      }
+
+      collected.set(id, {
+        id,
+        title: item.title.trim().slice(0, 120),
+        description: typeof item.description === "string"
+          ? item.description.slice(0, 2000)
+          : undefined,
+        startTime: Number(item.startTime),
+      });
+    }
+  }
+
+  if (
+    expectedPages === null ||
+    expectedTotal === null ||
+    collected.size !== expectedTotal
+  ) {
+    throw new Error(
+      `Respuesta incompleta de Raid-Helper: se recibieron ${collected.size} eventos de ${expectedTotal ?? "un total desconocido"}.`
+    );
+  }
+
+  return [...collected.values()];
+};
+
+const syncRaidHelperEvents = async (env: Env): Promise<{ received: number }> => {
+  const events = await fetchRaidHelperEvents(env);
+
+  // D1 batch es transaccional: si falla cualquier sentencia, no se oculta
+  // ningún evento por una sincronización incompleta.
+  const statements = [
+    env.DB.prepare(
+      "UPDATE events SET is_visible = 0 WHERE raid_helper_id IS NOT NULL"
+    ),
+    ...events.map((event) =>
+      env.DB.prepare(
+        `INSERT INTO events
+          (title, event_type, starts_at, description, raid_helper_id, is_visible)
+         VALUES (?, 'PvE', ?, ?, ?, 1)
+         ON CONFLICT DO UPDATE SET
+           title = excluded.title,
+           event_type = excluded.event_type,
+           starts_at = excluded.starts_at,
+           description = excluded.description,
+           is_visible = 1`
+      ).bind(
+        event.title,
+        new Date(Number(event.startTime) * 1000).toISOString(),
+        event.description ?? null,
+        event.id
+      )
+    ),
+  ];
+
+  await env.DB.batch(statements);
+  return { received: events.length };
+};
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -481,7 +627,7 @@ export default {
     if (pathname === "/api/events" && method === "GET") {
       try {
         const result = await env.DB.prepare(
-          "SELECT id, title, event_type AS type, starts_at, description FROM events ORDER BY starts_at LIMIT 20"
+          "SELECT id, title, event_type AS type, starts_at, description FROM events WHERE is_visible = 1 ORDER BY starts_at LIMIT 20"
         ).all();
 
         return json(result.results);
@@ -642,5 +788,20 @@ export default {
     }
 
     return json({ error: "Not found" }, 404);
+  },
+
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext
+  ): Promise<void> {
+    ctx.waitUntil(
+      syncRaidHelperEvents(env).catch((error: unknown) => {
+        console.error(
+          "Falló la sincronización de Raid-Helper:",
+          error instanceof Error ? error.message : String(error)
+        );
+      })
+    );
   },
 };
