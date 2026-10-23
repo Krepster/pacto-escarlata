@@ -27,6 +27,8 @@ const ALLOWED_ORIGINS = new Set([
   "https://pacto-escarlata.pages.dev",
   "http://localhost:5173",
   "http://localhost:5174",
+  "http://192.168.1.27:5173",
+  
 ]);
 
 const json = (data: unknown, status = 200, extraHeaders?: HeadersInit) => {

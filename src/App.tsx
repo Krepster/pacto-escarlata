@@ -10,6 +10,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Menu,
+  LayoutDashboard,
+  BookOpen,
+  Plug,
+  Settings,
+  LogOut,
   Shield,
   Swords,
   Users,
@@ -512,16 +517,15 @@ function PublicSite() {
 }
 
 
-type RosterRequest = {
+type AdminMember = {
   id: number;
-  discord_username: string;
   character_name: string;
   class_name: string;
-  specialization: string;
+  specialization?: string;
   role: string;
-  status: string;
-  created_at: string;
 };
+
+type AdminSection = "dashboard" | "events" | "members" | "content" | "integrations" | "settings";
 
 function AdminApp() {
   const [checking, setChecking] = useState(true);
@@ -531,7 +535,9 @@ function AdminApp() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [events, setEvents] = useState<EventItem[]>([]);
-  const [requests, setRequests] = useState<RosterRequest[]>([]);
+  const [members, setMembers] = useState<AdminMember[]>([]);
+  const [activeSection, setActiveSection] = useState<AdminSection>("dashboard");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [type, setType] = useState("PvE");
   const [startsAt, setStartsAt] = useState("");
@@ -557,13 +563,15 @@ function AdminApp() {
     return data;
   };
 
+  // El roster público contiene los personajes admitidos. Las decisiones de admisión
+  // siguen gestionándose en Discord; el panel no aprueba ni rechaza solicitudes.
   const loadAdminData = async () => {
-    const [eventData, requestData] = await Promise.all([
+    const [eventData, rosterData] = await Promise.all([
       apiFetch("/events"),
-      apiFetch("/admin/roster-requests"),
+      apiFetch("/roster"),
     ]);
     setEvents(Array.isArray(eventData) ? eventData : []);
-    setRequests(Array.isArray(requestData) ? requestData : []);
+    setMembers(Array.isArray(rosterData) ? rosterData : []);
   };
 
   useEffect(() => {
@@ -571,18 +579,15 @@ function AdminApp() {
     apiFetch("/admin/session")
       .then((data) => {
         if (
-          !cancelled &&
-          data !== null &&
-          typeof data === "object" &&
-          "authenticated" in data &&
-          data.authenticated === true
+          !cancelled && data !== null && typeof data === "object" &&
+          "authenticated" in data && data.authenticated === true
         ) {
           setAuthenticated(true);
           return loadAdminData();
         }
       })
       .catch(() => {
-        // No hay una sesión activa; se muestra el formulario de acceso.
+        // Sin sesión activa, se muestra el formulario de acceso.
       })
       .catch(() => {
         if (!cancelled) setError("No se pudieron cargar los datos del panel.");
@@ -616,10 +621,12 @@ function AdminApp() {
     setBusy(true);
     try {
       await apiFetch("/admin/logout", { method: "POST", body: JSON.stringify({}) });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo cerrar la sesión.");
     } finally {
       setAuthenticated(false);
       setEvents([]);
-      setRequests([]);
+      setMembers([]);
       setBusy(false);
     }
   };
@@ -663,27 +670,8 @@ function AdminApp() {
     }
   };
 
-  const reviewRequest = async (id: number, action: "approve" | "reject") => {
-    const promptName = window.prompt("Nombre que aparecerá como revisor:", username || "admin");
-    if (promptName === null) return;
-    setBusy(true);
-    setError("");
-    try {
-      await apiFetch(`/admin/roster-requests/${id}/${action}`, {
-        method: "POST",
-        body: JSON.stringify({ reviewer: promptName }),
-      });
-      await loadAdminData();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo revisar la solicitud.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const panelStyle: CSSProperties = {
-    minHeight: "100vh", background: "#11110f", color: "#f4efe5",
-    padding: "clamp(20px, 4vw, 48px)", fontFamily: "inherit",
+    minHeight: "100vh", background: "#11110f", color: "#f4efe5", fontFamily: "inherit",
   };
   const cardStyle: CSSProperties = {
     background: "#1b1a17", border: "1px solid #49402d", borderRadius: 12,
@@ -698,18 +686,36 @@ function AdminApp() {
     padding: "10px 14px", borderRadius: 7, border: "1px solid #b59a5a",
     background: "#b59a5a", color: "#171510", cursor: "pointer", fontWeight: 700,
   };
+  const mutedText: CSSProperties = { color: "#b9b2a4" };
+
+  const navItems: { id: AdminSection; label: string; icon: typeof LayoutDashboard }[] = [
+    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "events", label: "Eventos", icon: CalendarDays },
+    { id: "members", label: "Miembros", icon: Users },
+    { id: "content", label: "Contenido", icon: BookOpen },
+    { id: "integrations", label: "Integraciones", icon: Plug },
+    { id: "settings", label: "Configuración", icon: Settings },
+  ];
+  const sectionTitles: Record<AdminSection, { title: string; subtitle: string }> = {
+    dashboard: { title: "Dashboard", subtitle: "Resumen general de la hermandad." },
+    events: { title: "Eventos", subtitle: "Gestiona las actividades de Pacto Escarlata." },
+    members: { title: "Miembros", subtitle: "Personajes admitidos que aparecen en el roster." },
+    content: { title: "Contenido", subtitle: "Espacio reservado para futuras guías y noticias." },
+    integrations: { title: "Integraciones", subtitle: "Servicios conectados al proyecto." },
+    settings: { title: "Configuración", subtitle: "Ajustes generales del panel de administración." },
+  };
 
   if (checking) {
-    return <main style={panelStyle}><p>Comprobando la sesión de administrador…</p></main>;
+    return <main style={{ ...panelStyle, padding: 32 }}><p>Comprobando la sesión de administrador…</p></main>;
   }
 
   if (!authenticated) {
     return (
-      <main style={{ ...panelStyle, display: "grid", placeItems: "center" }}>
+      <main style={{ ...panelStyle, display: "grid", placeItems: "center", padding: 20 }}>
         <form onSubmit={login} style={{ ...cardStyle, width: "min(100%, 420px)", boxSizing: "border-box" }}>
           <p style={{ color: "#c5a968", letterSpacing: 2, fontSize: 12 }}>PACTO ESCARLATA / PRIVADO</p>
           <h1 style={{ marginTop: 8 }}>Administración</h1>
-          <p style={{ color: "#b9b2a4" }}>Inicia sesión para gestionar actividades y solicitudes de ingreso.</p>
+          <p style={mutedText}>Inicia sesión para gestionar las actividades y consultar la plantilla.</p>
           <label>Usuario<input autoComplete="username" required value={username} onChange={(e) => setUsername(e.target.value)} style={inputStyle} /></label>
           <label style={{ display: "block", marginTop: 16 }}>Contraseña<input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} /></label>
           {error && <p role="alert" style={{ color: "#ff9a8c" }}>{error}</p>}
@@ -720,16 +726,11 @@ function AdminApp() {
     );
   }
 
-  return (
-    <main style={panelStyle}>
-      <header style={{ display: "flex", gap: 16, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", marginBottom: 28 }}>
-        <div><p style={{ color: "#c5a968", letterSpacing: 2, fontSize: 12 }}>PACTO ESCARLATA</p><h1 style={{ margin: "6px 0" }}>Panel de administración</h1><p style={{ color: "#b9b2a4", margin: 0 }}>Eventos y solicitudes de la hermandad</p></div>
-        <button onClick={logout} disabled={busy} style={buttonStyle}>Cerrar sesión</button>
-      </header>
-      {error && <p role="alert" style={{ ...cardStyle, color: "#ff9a8c" }}>{error}</p>}
+  const renderEvents = () => (
+    <>
       <section style={cardStyle}>
-        <h2>Crear actividad</h2>
-        <form onSubmit={createEvent} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14 }}>
+        <h2 style={{ marginTop: 0 }}>Crear actividad</h2>
+        <form onSubmit={createEvent} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: 14 }}>
           <label>Título<input required maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} style={inputStyle} /></label>
           <label>Tipo<select value={type} onChange={(e) => setType(e.target.value)} style={inputStyle}><option value="PvE">PvE</option><option value="PvP">PvP</option><option value="Social">Social</option></select></label>
           <label>Fecha y hora<input type="datetime-local" required value={startsAt} onChange={(e) => setStartsAt(e.target.value)} style={inputStyle} /></label>
@@ -738,26 +739,151 @@ function AdminApp() {
         </form>
       </section>
       <section style={cardStyle}>
-        <h2>Actividades existentes</h2>
-        {events.length === 0 ? <p style={{ color: "#b9b2a4" }}>No hay actividades registradas.</p> : events.map((item) => (
+        <h2 style={{ marginTop: 0 }}>Actividades existentes <span style={{ color: "#c5a968", fontSize: 14 }}>({events.length})</span></h2>
+        {events.length === 0 ? <p style={mutedText}>No hay actividades registradas.</p> : events.map((item) => (
           <article key={item.id} style={{ padding: "14px 0", borderBottom: "1px solid #39352c", display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-            <div><strong>{item.title}</strong><p style={{ color: "#b9b2a4", margin: "5px 0" }}>{item.type} · {new Date(item.starts_at).toLocaleString("es-ES")}</p>{item.description && <p>{item.description}</p>}</div>
-            <button disabled={busy} onClick={() => void deleteEvent(item.id)} style={{ ...buttonStyle, background: "transparent", color: "#ff9a8c", borderColor: "#8d554e" }}>Eliminar</button>
+            <div style={{ minWidth: 0, flex: 1 }}><strong>{item.title}</strong><p style={{ ...mutedText, margin: "5px 0" }}>{item.type} · {new Date(item.starts_at).toLocaleString("es-ES")}</p>{item.description && <p>{item.description}</p>}</div>
+            <button disabled={busy} onClick={() => void deleteEvent(item.id)} style={{ ...buttonStyle, alignSelf: "center", background: "transparent", color: "#ff9a8c", borderColor: "#8d554e" }}>Eliminar</button>
           </article>
         ))}
+      </section>
+    </>
+  );
+
+  const renderMembers = () => (
+    <section style={cardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h2 style={{ marginTop: 0 }}>Plantilla admitida</h2>
+        <span style={{ color: "#c5a968" }}>{members.length} personajes</span>
+      </div>
+      <p style={mutedText}>La aprobación y el rechazo de solicitudes se gestionan exclusivamente desde Discord. Aquí solo se muestran los personajes que devuelve el roster aprobado.</p>
+      {members.length === 0 ? <p style={mutedText}>Todavía no hay personajes aprobados en la plantilla.</p> : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 480 }}>
+            <thead><tr>{["Personaje", "Clase", "Especialización", "Rol"].map((label) => <th key={label} style={{ textAlign: "left", padding: "12px 10px", color: "#c5a968", borderBottom: "1px solid #49402d" }}>{label}</th>)}</tr></thead>
+            <tbody>{members.map((member) => <tr key={member.id}>
+              <td style={{ padding: 10, borderBottom: "1px solid #39352c", fontWeight: 700 }}>{member.character_name}</td>
+              <td style={{ padding: 10, borderBottom: "1px solid #39352c" }}>{member.class_name}</td>
+              <td style={{ padding: 10, borderBottom: "1px solid #39352c", ...mutedText }}>{member.specialization || "—"}</td>
+              <td style={{ padding: 10, borderBottom: "1px solid #39352c" }}>{member.role}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+
+  const renderPlaceholder = (section: "content" | "integrations" | "settings") => {
+    const details = {
+      content: { icon: BookOpen, title: "Gestión de contenido", body: "Aquí prepararemos la gestión de guías, noticias y recursos de la hermandad en una siguiente fase." },
+      integrations: { icon: Plug, title: "Servicios conectados", body: "La sincronización de eventos con Raid-Helper continúa funcionando en el Worker. En esta sección añadiremos una vista de estado cuando dispongamos de un endpoint de diagnóstico fiable." },
+      settings: { icon: Settings, title: "Ajustes del panel", body: "Esta sección queda preparada para futuras opciones de administración. No hay ajustes adicionales configurados todavía." },
+    }[section];
+    const PlaceholderIcon = details.icon;
+    return <section style={{ ...cardStyle, minHeight: 180 }}>
+      <PlaceholderIcon size={30} color="#c5a968" />
+      <h2>{details.title}</h2>
+      <p style={mutedText}>{details.body}</p>
+      <span style={{ display: "inline-flex", padding: "6px 10px", border: "1px solid #5b513b", borderRadius: 20, color: "#c5a968", fontSize: 12 }}>Preparado para una próxima fase</span>
+    </section>;
+  };
+
+  const renderDashboard = () => (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 190px), 1fr))", gap: 14, marginBottom: 20 }}>
+        {[
+          { label: "Eventos registrados", value: events.length, icon: CalendarDays, target: "events" as AdminSection },
+          { label: "Personajes admitidos", value: members.length, icon: Users, target: "members" as AdminSection },
+        ].map((metric) => {
+          const MetricIcon = metric.icon;
+          return <button key={metric.label} type="button" onClick={() => setActiveSection(metric.target)} style={{ ...cardStyle, marginBottom: 0, textAlign: "left", cursor: "pointer", color: "inherit" }}>
+            <MetricIcon size={24} color="#c5a968" />
+            <p style={{ ...mutedText, marginBottom: 6 }}>{metric.label}</p>
+            <strong style={{ fontSize: 30 }}>{metric.value}</strong>
+            <p style={{ color: "#c5a968", marginBottom: 0, fontSize: 13 }}>Ver sección →</p>
+          </button>;
+        })}
+      </div>
+      <section style={cardStyle}>
+        <h2 style={{ marginTop: 0 }}>Accesos rápidos</h2>
+        <p style={mutedText}>Selecciona una sección desde el menú lateral o utiliza estos accesos.</p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+          <button type="button" onClick={() => setActiveSection("events")} style={buttonStyle}> <CalendarDays size={16} style={{ verticalAlign: "middle", marginRight: 6 }} />Gestionar eventos</button>
+          <button type="button" onClick={() => setActiveSection("members")} style={{ ...buttonStyle, background: "transparent", color: "#f4efe5" }}><Users size={16} style={{ verticalAlign: "middle", marginRight: 6 }} />Ver miembros</button>
+        </div>
       </section>
       <section style={cardStyle}>
-        <h2>Solicitudes de ingreso</h2>
-        {requests.length === 0 ? <p style={{ color: "#b9b2a4" }}>No hay solicitudes.</p> : requests.map((request) => (
-          <article key={request.id} style={{ padding: "14px 0", borderBottom: "1px solid #39352c" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <div><strong>{request.character_name}</strong> <span style={{ color: "#c5a968" }}>· {request.status}</span><p style={{ margin: "5px 0", color: "#b9b2a4" }}>{request.discord_username} · {request.class_name} · {request.specialization} · {request.role}</p></div>
-              {request.status === "pending" && <div style={{ display: "flex", gap: 8, alignItems: "start" }}><button disabled={busy} onClick={() => void reviewRequest(request.id, "approve")} style={buttonStyle}>Aprobar</button><button disabled={busy} onClick={() => void reviewRequest(request.id, "reject")} style={{ ...buttonStyle, background: "transparent", color: "#ff9a8c", borderColor: "#8d554e" }}>Rechazar</button></div>}
-            </div>
+        <h2 style={{ marginTop: 0 }}>Próximos eventos</h2>
+        {events.length === 0 ? <p style={mutedText}>No hay actividades registradas.</p> : [...events].sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime()).slice(0, 4).map((item) => (
+          <article key={item.id} style={{ padding: "12px 0", borderBottom: "1px solid #39352c" }}>
+            <strong>{item.title}</strong><p style={{ ...mutedText, margin: "5px 0 0" }}>{item.type} · {new Date(item.starts_at).toLocaleString("es-ES")}</p>
           </article>
         ))}
       </section>
-      <a href="/" style={{ color: "#c5a968" }}>← Volver a la web pública</a>
+    </>
+  );
+
+  const section = sectionTitles[activeSection];
+
+  return (
+    <main style={panelStyle}>
+      <style>{`
+        .admin-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 100vh; }
+        .admin-sidebar { background: #171512; border-right: 1px solid #39352c; padding: 24px 16px; display: flex; flex-direction: column; gap: 24px; }
+        .admin-nav-button { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; border: 1px solid transparent; border-radius: 8px; padding: 12px; background: transparent; color: #c8c0b2; cursor: pointer; font: inherit; }
+        .admin-nav-button:hover { background: #252119; color: #f4efe5; }
+        .admin-nav-button[aria-current="page"] { background: #3a2529; border-color: #67414a; color: #f4efe5; }
+        .admin-content { min-width: 0; padding: clamp(18px, 3vw, 40px); }
+        @media (max-width: 760px) {
+          .admin-layout { grid-template-columns: minmax(0, 1fr); }
+          .admin-sidebar { border-right: 0; border-bottom: 1px solid #39352c; padding: 16px; gap: 14px; }
+          .admin-mobile-toggle { display: inline-flex !important; align-items: center; justify-content: center; }
+          .admin-sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+          .admin-nav-list { display: none; flex-direction: row !important; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+          .admin-nav-button { width: auto; flex: 0 0 auto; white-space: nowrap; padding: 10px; }
+          .admin-sidebar-footer { display: flex !important; flex-direction: row !important; align-items: center; justify-content: space-between; }
+          .admin-content { padding: 18px 14px; }
+        }
+      `}</style>
+      <div className="admin-layout">
+        <aside className="admin-sidebar">
+          <div className="admin-sidebar-top">
+            <a href="/" style={{ color: "inherit", textDecoration: "none", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ display: "grid", placeItems: "center", width: 42, height: 42, border: "1px solid #8d7545", borderRadius: 10, color: "#c5a968" }}><Shield size={25} /></span>
+              <span><strong style={{ display: "block", letterSpacing: 1 }}>PACTO</strong><strong style={{ display: "block", color: "#c5a968", letterSpacing: 1 }}>ESCARLATA</strong><small style={{ color: "#918879" }}>Administración</small></span>
+            </a>
+            <button type="button" className="admin-mobile-toggle" aria-label={mobileNavOpen ? "Ocultar navegación" : "Mostrar navegación"} onClick={() => setMobileNavOpen(!mobileNavOpen)} style={{ display: "none", ...buttonStyle, padding: 9, background: "transparent", color: "#f4efe5" }}><Menu size={19} /></button>
+          </div>
+          <nav className="admin-nav-list" aria-label="Navegación de administración" style={{ display: mobileNavOpen ? "flex" : undefined, flexDirection: "column", gap: 5 }}>
+            {navItems.map((item) => {
+              const ItemIcon = item.icon;
+              return <button key={item.id} type="button" className="admin-nav-button" aria-current={activeSection === item.id ? "page" : undefined} onClick={() => { setActiveSection(item.id); setMobileNavOpen(false); setError(""); }}>
+                <ItemIcon size={19} /><span>{item.label}</span>{activeSection === item.id && <span style={{ marginLeft: "auto", color: "#c5a968" }}>•</span>}
+              </button>;
+            })}
+          </nav>
+          <div className="admin-sidebar-footer" style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 12, borderTop: "1px solid #39352c", paddingTop: 18 }}>
+            <span style={{ color: "#918879", fontSize: 12 }}>Sesión: {username || "Administrador"}</span>
+            <button type="button" onClick={() => void logout()} disabled={busy} className="admin-nav-button"><LogOut size={18} />Cerrar sesión</button>
+            <a href="/" style={{ color: "#c5a968", fontSize: 13, textDecoration: "none" }}>← Volver a la web pública</a>
+          </div>
+        </aside>
+
+        <div className="admin-content">
+          <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap", marginBottom: 26 }}>
+            <div><p style={{ color: "#c5a968", letterSpacing: 2, fontSize: 11, margin: "0 0 8px" }}>PACTO ESCARLATA / ADMINISTRACIÓN</p><h1 style={{ margin: "0 0 8px", fontSize: "clamp(26px, 3vw, 36px)" }}>{section.title}</h1><p style={{ ...mutedText, margin: 0 }}>{section.subtitle}</p></div>
+            <span style={{ border: "1px solid #49402d", borderRadius: 30, padding: "8px 12px", color: "#c5a968", fontSize: 12 }}>PANEL PRIVADO</span>
+          </header>
+          {error && <div role="alert" style={{ ...cardStyle, color: "#ff9a8c", borderColor: "#8d554e" }}>{error}</div>}
+          {activeSection === "dashboard" && renderDashboard()}
+          {activeSection === "events" && renderEvents()}
+          {activeSection === "members" && renderMembers()}
+          {(activeSection === "content" || activeSection === "integrations" || activeSection === "settings") && renderPlaceholder(activeSection)}
+          <footer style={{ color: "#81796d", fontSize: 12, borderTop: "1px solid #39352c", paddingTop: 16, marginTop: 28 }}>
+            Pacto Escarlata · Panel de administración · La gestión de admisiones se realiza desde Discord.
+          </footer>
+        </div>
+      </div>
     </main>
   );
 }
