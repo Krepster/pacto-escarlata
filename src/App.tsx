@@ -1,5 +1,6 @@
 
 import { useEffect, useState } from "react";
+import TalentCalculator from "./TalentCalculator";
 import type { CSSProperties, FormEvent } from "react";
 import {
   ArrowRight,
@@ -14,6 +15,7 @@ import {
   Menu,
   LayoutDashboard,
   BookOpen,
+  BrainCircuit,
   Plug,
   Settings,
   LogOut,
@@ -289,6 +291,7 @@ function PublicSite() {
               {professionList.map((profession) => <a href={`/profesiones/${profession.slug}`} key={profession.slug}>{profession.name}</a>)}
             </div>
           </div>
+          <a href="/talentos" onClick={closeMenu}>Talentos</a>
           <a
             className="nav-cta"
             href={DISCORD_INVITE_URL}
@@ -939,6 +942,7 @@ function ProfessionHeader() {
         <nav className={menuOpen ? "nav nav-open" : "nav"}>
           <a href="/">Inicio</a><a href="/#actividades">Eventos</a><a href="/#plantilla">Miembros</a>
           <div className="nav-dropdown nav-dropdown-active"><a className="nav-dropdown-trigger" href="/profesiones" aria-haspopup="true">Profesiones <ChevronDown size={13} /></a><div className="nav-dropdown-menu"><a href="/profesiones">Todas las profesiones</a>{professionList.map((profession) => <a href={`/profesiones/${profession.slug}`} key={profession.slug}>{profession.name}</a>)}</div></div>
+          <a href="/talentos">Talentos</a>
           <a className="nav-cta" href={DISCORD_INVITE_URL} target="_blank" rel="noreferrer">Únete al pacto <ArrowRight size={15} /></a>
         </nav>
       </header>
@@ -1354,9 +1358,32 @@ function ProfessionDetailPage({ profession }: { profession: ProfessionInfo }) {
     </section></main><ProfessionFooter /></div>;
 }
 
+function TalentCalculatorPage() {
+  return <div className="site-shell">
+    <ProfessionHeader />
+    <main className="profession-page talent-page">
+      <section className="profession-hero talent-hero">
+        <div className="profession-backdrop" />
+        <div className="profession-hero-content">
+          <a className="profession-breadcrumb" href="/">Pacto Escarlata <span>/</span> Talentos</a>
+          <div className="section-kicker"><BrainCircuit size={15} /> HERRAMIENTA DE LA HERMANDAD</div>
+          <h1>Calculadora de <em>talentos</em></h1>
+          <p>Planifica tu build de WoW Forever directamente en Pacto Escarlata, sin iframes.</p>
+        </div>
+      </section>
+      <section className="talent-content">
+        <TalentCalculator />
+        <a className="profession-back-link" href="/"><ArrowRight size={15}/> Volver a Pacto Escarlata</a>
+      </section>
+    </main>
+    <ProfessionFooter />
+  </div>;
+}
+
 export default function App() {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
   if (path === "/admin") return <AdminApp />;
+  if (path === "/talentos") return <TalentCalculatorPage />;
   if (path === "/profesiones") return <ProfessionsPage />;
   const professionMatch = path.match(/^\/profesiones\/([^/]+)$/);
   if (professionMatch) { const profession = professionList.find(item => item.slug === professionMatch[1]); if (profession) return <ProfessionDetailPage profession={profession} />; }
