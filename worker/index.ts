@@ -436,6 +436,51 @@ const syncRaidHelperEvents = async (env: Env): Promise<{ received: number }> => 
   return { received: events.length };
 };
 
+
+const randomToken = (bytes = 32): string =>
+  encodeBase64Url(crypto.getRandomValues(new Uint8Array(bytes)));
+
+const sha256Hex = async (value: string): Promise<string> => {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
+const cleanText = (value: unknown, min: number, max: number): string | null =>
+  typeof value === "string" && value.trim().length >= min && value.trim().length <= max
+    ? value.trim()
+    : null;
+
+const validDungeonGroup = (body: Record<string, unknown>) => {
+  const title = cleanText(body.title, 3, 100);
+  const dungeonName = cleanText(body.dungeon_name, 2, 100);
+  const creatorName = cleanText(body.creator_name, 2, 40);
+  const startsAt = typeof body.starts_at === "string" && Number.isFinite(Date.parse(body.starts_at))
+    ? new Date(body.starts_at).toISOString() : null;
+  const minLevel = Number(body.min_level);
+  const maxLevel = Number(body.max_level);
+  const tankSlots = Number(body.tank_slots ?? 1);
+  const healerSlots = Number(body.healer_slots ?? 1);
+  const dpsSlots = Number(body.dps_slots ?? 3);
+  const description = typeof body.description === "string" ? body.description.trim() : "";
+  if (!title || !dungeonName || !creatorName || !startsAt ||
+      !Number.isInteger(minLevel) || minLevel < 1 || minLevel > 60 ||
+      !Number.isInteger(maxLevel) || maxLevel < minLevel || maxLevel > 60 ||
+      ![tankSlots, healerSlots, dpsSlots].every((n) => Number.isInteger(n) && n >= 0 && n <= 5) ||
+      tankSlots + healerSlots + dpsSlots < 1 || description.length > 1500) return null;
+  return { title, dungeonName, creatorName, startsAt, minLevel, maxLevel, tankSlots, healerSlots, dpsSlots, description };
+};
+
+const groupManagementAuthorized = async (
+  request: Request, env: Env, groupId: string
+): Promise<boolean> => {
+  const token = request.headers.get("X-Group-Management-Token") ?? "";
+  if (token.length < 32 || token.length > 200) return false;
+  const row = await env.DB.prepare("SELECT management_token_hash FROM dungeon_groups WHERE id = ?")
+    .bind(groupId).first<{ management_token_hash: string }>();
+  if (!row) return false;
+  return constantTimeEqual(await sha256Hex(token), row.management_token_hash);
+};
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -476,6 +521,179 @@ export default {
       } catch {
         return json({ status: "error", database: "unavailable" }, 503);
       }
+    }
+
+
+    // Buscador público de grupos PvE. La lectura es pública; las acciones de gestión
+    // requieren el token privado entregado al creador al publicar la actividad.
+    if (pathname === "/api/dungeon-groups" && method === "GET") {
+      try {
+        const dungeon = url.searchParams.get("dungeon");
+        const status = url.searchParams.get("status") || "recruiting";
+        const allowedStatuses = ["recruiting", "full", "in_progress", "completed", "cancelled"];
+        if (!allowedStatuses.includes(status)) return json({ error: "Estado no válido." }, 400);
+        const result = await env.DB.prepare(
+          `SELECT g.id, g.title, g.dungeon_name, g.creator_name, g.description,
+                  g.min_level, g.max_level, g.starts_at, g.timezone,
+                  g.tank_slots, g.healer_slots, g.dps_slots, g.status, g.created_at,
+                  (SELECT COUNT(*) FROM dungeon_group_applications a
+                   WHERE a.group_id = g.id AND a.status = 'accepted' AND a.role = 'tank') AS tanks_filled,
+                  (SELECT COUNT(*) FROM dungeon_group_applications a
+                   WHERE a.group_id = g.id AND a.status = 'accepted' AND a.role = 'healer') AS healers_filled,
+                  (SELECT COUNT(*) FROM dungeon_group_applications a
+                   WHERE a.group_id = g.id AND a.status = 'accepted' AND a.role = 'dps') AS dps_filled
+           FROM dungeon_groups g
+           WHERE g.status = ? AND g.expires_at > ?
+             AND (? IS NULL OR g.dungeon_name = ?)
+           ORDER BY g.starts_at ASC LIMIT 100`
+        ).bind(status, new Date().toISOString(), dungeon, dungeon).all();
+        return json(result.results);
+      } catch {
+        return json({ error: "No se pudieron consultar los grupos. Comprueba que se ha aplicado la migración 0004." }, 500);
+      }
+    }
+
+    if (pathname === "/api/dungeon-groups" && method === "POST") {
+      if (!isAllowedOrigin(request)) return json({ error: "Origen no permitido." }, 403);
+      const body = await readJson(request);
+      const data = body && validDungeonGroup(body);
+      if (!data) return json({ error: "Los datos del grupo no son válidos." }, 400);
+      const id = randomToken(12);
+      const managementToken = randomToken(32);
+      const tokenHash = await sha256Hex(managementToken);
+      const expiresAt = new Date(Math.max(Date.parse(data.startsAt) + 24 * 60 * 60 * 1000, Date.now() + 2 * 60 * 60 * 1000)).toISOString();
+      try {
+        await env.DB.prepare(
+          `INSERT INTO dungeon_groups
+           (id, title, dungeon_name, creator_name, description, min_level, max_level,
+            starts_at, timezone, tank_slots, healer_slots, dps_slots, status,
+            management_token_hash, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Europe/Madrid', ?, ?, ?, 'recruiting', ?, ?)`
+        ).bind(id, data.title, data.dungeonName, data.creatorName, data.description,
+          data.minLevel, data.maxLevel, data.startsAt, data.tankSlots, data.healerSlots,
+          data.dpsSlots, tokenHash, expiresAt).run();
+        // El token se devuelve una sola vez; el cliente debe guardarlo de forma privada.
+        return json({ success: true, group_id: id, management_token: managementToken,
+          management_header: "X-Group-Management-Token" }, 201);
+      } catch {
+        return json({ error: "No se pudo crear el grupo. Comprueba que se ha aplicado la migración 0004." }, 500);
+      }
+    }
+
+    const applicationCreateMatch = pathname.match(/^\/api\/dungeon-groups\/([A-Za-z0-9_-]+)\/applications$/);
+    if (applicationCreateMatch && method === "POST") {
+      if (!isAllowedOrigin(request)) return json({ error: "Origen no permitido." }, 403);
+      const groupId = applicationCreateMatch[1];
+      const body = await readJson(request);
+      const characterName = body && cleanText(body.character_name, 2, 40);
+      const className = body && cleanText(body.class_name, 2, 30);
+      const note = body && (typeof body.note === "string" ? body.note.trim() : "");
+      const contact = body && (typeof body.contact === "string" ? body.contact.trim() : "");
+      const level = Number(body?.level);
+      const role = body?.role;
+      if (!characterName || !className || !Number.isInteger(level) || level < 1 || level > 60 ||
+          !["tank", "healer", "dps"].includes(String(role)) ||
+          typeof note !== "string" || note.length > 500 ||
+          typeof contact !== "string" || contact.length > 120) {
+        return json({ error: "Los datos de la solicitud no son válidos." }, 400);
+      }
+      try {
+        const group = await env.DB.prepare(
+          "SELECT min_level, max_level, status FROM dungeon_groups WHERE id = ? AND expires_at > ?"
+        ).bind(groupId, new Date().toISOString()).first<{ min_level: number; max_level: number; status: string }>();
+        if (!group) return json({ error: "Grupo no encontrado o caducado." }, 404);
+        if (group.status !== "recruiting") return json({ error: "Este grupo ya no acepta solicitudes." }, 409);
+        if (level < group.min_level || level > group.max_level) return json({ error: "El nivel no está dentro del rango del grupo." }, 400);
+        const id = randomToken(12);
+        await env.DB.prepare(
+          `INSERT INTO dungeon_group_applications
+           (id, group_id, character_name, class_name, level, role, note, contact)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(id, groupId, characterName, className, level, role, note, contact).run();
+        return json({ success: true, application_id: id, status: "pending" }, 201);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (message.includes("UNIQUE")) return json({ error: "Ese personaje ya ha solicitado plaza para este grupo." }, 409);
+        return json({ error: "No se pudo enviar la solicitud." }, 500);
+      }
+    }
+
+    const manageGroupMatch = pathname.match(/^\/api\/dungeon-groups\/([A-Za-z0-9_-]+)\/manage$/);
+    if (manageGroupMatch && method === "GET") {
+      const groupId = manageGroupMatch[1];
+      if (!(await groupManagementAuthorized(request, env, groupId))) return json({ error: "Token de gestión no válido." }, 403);
+      try {
+        const [group, applications] = await Promise.all([
+          env.DB.prepare("SELECT * FROM dungeon_groups WHERE id = ?").bind(groupId).first(),
+          env.DB.prepare("SELECT id, character_name, class_name, level, role, note, contact, status, created_at FROM dungeon_group_applications WHERE group_id = ? ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 ELSE 2 END, created_at").bind(groupId).all()
+        ]);
+        if (!group) return json({ error: "Grupo no encontrado." }, 404);
+        return json({ group, applications: applications.results });
+      } catch {
+        return json({ error: "No se pudo cargar la gestión del grupo." }, 500);
+      }
+    }
+
+    const applicationDecisionMatch = pathname.match(/^\/api\/dungeon-groups\/([A-Za-z0-9_-]+)\/applications\/([A-Za-z0-9_-]+)\/(accept|reject)$/);
+    if (applicationDecisionMatch && method === "POST") {
+      if (!isAllowedOrigin(request)) return json({ error: "Origen no permitido." }, 403);
+      const [, groupId, applicationId, action] = applicationDecisionMatch;
+      if (!(await groupManagementAuthorized(request, env, groupId))) return json({ error: "Token de gestión no válido." }, 403);
+      try {
+        const targetStatus = action === "accept" ? "accepted" : "rejected";
+        let result;
+        if (action === "reject") {
+          result = await env.DB.prepare(
+            "UPDATE dungeon_group_applications SET status = 'rejected', updated_at = ? WHERE id = ? AND group_id = ? AND status = 'pending'"
+          ).bind(new Date().toISOString(), applicationId, groupId).run();
+        } else {
+          // La condición de plazas disponibles se comprueba dentro del UPDATE para reducir
+          // el riesgo de aceptar dos solicitudes concurrentes para la última plaza.
+          result = await env.DB.prepare(
+            `UPDATE dungeon_group_applications
+             SET status = 'accepted', updated_at = ?
+             WHERE id = ? AND group_id = ? AND status = 'pending'
+               AND EXISTS (
+                 SELECT 1 FROM dungeon_groups g
+                 WHERE g.id = dungeon_group_applications.group_id
+                   AND g.status = 'recruiting'
+                   AND (SELECT COUNT(*) FROM dungeon_group_applications a
+                        WHERE a.group_id = g.id AND a.status = 'accepted'
+                          AND a.role = dungeon_group_applications.role)
+                       < CASE dungeon_group_applications.role
+                           WHEN 'tank' THEN g.tank_slots
+                           WHEN 'healer' THEN g.healer_slots
+                           ELSE g.dps_slots END
+               )`
+          ).bind(new Date().toISOString(), applicationId, groupId).run();
+          if (!result.meta.changes) return json({ error: "No quedan plazas para ese rol, el grupo está cerrado o la solicitud ya se ha revisado." }, 409);
+        }
+        if (!result.meta.changes) return json({ error: "Solicitud no encontrada o ya revisada." }, 409);
+        // Actualiza el estado a completo cuando todos los huecos configurados están ocupados.
+        await env.DB.prepare(
+          `UPDATE dungeon_groups AS g SET status = 'full', updated_at = ?
+           WHERE g.id = ? AND g.status = 'recruiting'
+             AND (SELECT COUNT(*) FROM dungeon_group_applications a WHERE a.group_id = g.id AND a.status = 'accepted')
+                 >= g.tank_slots + g.healer_slots + g.dps_slots`
+        ).bind(new Date().toISOString(), groupId).run();
+        return json({ success: true, status: targetStatus });
+      } catch {
+        return json({ error: "No se pudo revisar la solicitud." }, 500);
+      }
+    }
+
+    const groupStatusMatch = pathname.match(/^\/api\/dungeon-groups\/([A-Za-z0-9_-]+)\/status$/);
+    if (groupStatusMatch && method === "POST") {
+      if (!isAllowedOrigin(request)) return json({ error: "Origen no permitido." }, 403);
+      const groupId = groupStatusMatch[1];
+      if (!(await groupManagementAuthorized(request, env, groupId))) return json({ error: "Token de gestión no válido." }, 403);
+      const body = await readJson(request);
+      const status = body?.status;
+      if (!["in_progress", "completed", "cancelled"].includes(String(status))) return json({ error: "Estado no válido." }, 400);
+      const result = await env.DB.prepare(
+        "UPDATE dungeon_groups SET status = ?, updated_at = ? WHERE id = ? AND status IN ('recruiting', 'full', 'in_progress')"
+      ).bind(status, new Date().toISOString(), groupId).run();
+      return result.meta.changes ? json({ success: true, status }) : json({ error: "No se pudo cambiar el estado del grupo." }, 409);
     }
 
     if (pathname === "/api/guild" && method === "GET") {

@@ -1,6 +1,7 @@
 
 import { useEffect, useState } from "react";
 import TalentCalculator from "./TalentCalculator";
+import DungeonGroupsPage from "./DungeonGroupsPage";
 import type { CSSProperties, FormEvent } from "react";
 import {
   ArrowRight,
@@ -273,6 +274,9 @@ function PublicSite() {
           </a>
           <a href="#actividades" onClick={closeMenu}>
             Eventos
+          </a>
+          <a href="/grupos" onClick={closeMenu}>
+            Buscar grupo
           </a>
           <a href="#plantilla" onClick={closeMenu}>
             Miembros
@@ -1383,6 +1387,7 @@ function TalentCalculatorPage() {
 export default function App() {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
   if (path === "/admin") return <AdminApp />;
+  if (path === "/grupos") return <DungeonGroupsPage />;
   if (path === "/talentos") return <TalentCalculatorPage />;
   if (path === "/profesiones") return <ProfessionsPage />;
   const professionMatch = path.match(/^\/profesiones\/([^/]+)$/);
