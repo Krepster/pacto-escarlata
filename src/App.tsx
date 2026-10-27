@@ -128,6 +128,10 @@ function PublicSite() {
   const [roster, setRoster] = useState<Array<{ id: number; character_name: string; class_name: string; specialization?: string; role: string }>>([]);
   const [rosterLoading, setRosterLoading] = useState(true);
   const [rosterError, setRosterError] = useState(false);
+  const [rosterRoleFilter, setRosterRoleFilter] = useState("all");
+  const [rosterSearch, setRosterSearch] = useState("");
+  const [rosterSortBy, setRosterSortBy] = useState<"character_name" | "class_name" | "specialization" | "role">("character_name");
+  const [rosterSortDirection, setRosterSortDirection] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
     let cancelled = false;
@@ -211,6 +215,21 @@ function PublicSite() {
       cancelled = true;
     };
   }, []);
+
+  const visibleRoster = roster
+    .filter((character) => rosterRoleFilter === "all" || normalizeRole(character.role) === rosterRoleFilter)
+    .filter((character) => {
+      const query = rosterSearch.trim().toLocaleLowerCase("es");
+      if (!query) return true;
+      return [character.character_name, character.class_name, character.specialization ?? "", roleLabel(normalizeRole(character.role))]
+        .some((value) => value.toLocaleLowerCase("es").includes(query));
+    })
+    .sort((a, b) => {
+      const left = String(a[rosterSortBy] ?? "").toLocaleLowerCase("es");
+      const right = String(b[rosterSortBy] ?? "").toLocaleLowerCase("es");
+      const comparison = left.localeCompare(right, "es", { sensitivity: "base", numeric: true });
+      return rosterSortDirection === "asc" ? comparison : -comparison;
+    });
 
   const closeMenu = () => setMenuOpen(false);
 
@@ -448,47 +467,97 @@ function PublicSite() {
           ) : roster.length === 0 ? (
             <p className="demo-note">Todavía no hay personajes en la plantilla. El registro se conectará al bot de Discord.</p>
           ) : (
-            <div className="roster-table-wrap">
-              <table className="roster-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Personaje</th>
-                    <th scope="col">Rol</th>
-                    <th scope="col">Clase</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {roster.map((character) => {
-                    const roleKey = normalizeRole(character.role);
-                    const classKey = normalizeClass(character.class_name);
-                    const RoleIcon = roleKey === "tank" ? Shield : roleKey === "heal" ? HeartPulse : Swords;
-                    return (
-                      <tr key={character.id}>
-                        <td className="roster-character-name">{character.character_name}</td>
-                        <td>
-                          <span className={`roster-role roster-role-${roleKey}`}>
-                            <RoleIcon size={16} aria-hidden="true" />
-                            <span>{roleLabel(roleKey)}</span>
-                          </span>
-                        </td>
-                        <td>
-                          <span className="roster-class-cell">
-                            <img
-                              className="roster-class-icon"
-                              src={CLASS_ICON_URLS[classKey] ?? ""}
-                              alt=""
-                              loading="lazy"
-                              onError={(event) => { event.currentTarget.style.visibility = "hidden"; }}
-                            />
-                            <span>{character.class_name}</span>
-                          </span>
-                        </td>
+            <>
+              <div className="roster-toolbar" aria-label="Filtros de miembros">
+                <label className="roster-control roster-search-control">
+                  <span>Buscar</span>
+                  <input
+                    type="search"
+                    value={rosterSearch}
+                    onChange={(event) => setRosterSearch(event.target.value)}
+                    placeholder="Personaje, clase o especialización…"
+                    aria-label="Buscar por personaje, clase o especialización"
+                  />
+                </label>
+                <label className="roster-control">
+                  <span>Filtrar por rol</span>
+                  <select value={rosterRoleFilter} onChange={(event) => setRosterRoleFilter(event.target.value)}>
+                    <option value="all">Todos los roles</option>
+                    <option value="tank">Tanque</option>
+                    <option value="heal">Sanador</option>
+                    <option value="dps">DPS</option>
+                  </select>
+                </label>
+                <label className="roster-control">
+                  <span>Ordenar por</span>
+                  <select value={rosterSortBy} onChange={(event) => setRosterSortBy(event.target.value as typeof rosterSortBy)}>
+                    <option value="character_name">Personaje</option>
+                    <option value="role">Rol</option>
+                    <option value="class_name">Clase</option>
+                    <option value="specialization">Especialización</option>
+                  </select>
+                </label>
+                <button
+                  className="roster-sort-direction"
+                  type="button"
+                  onClick={() => setRosterSortDirection((direction) => direction === "asc" ? "desc" : "asc")}
+                  aria-label={rosterSortDirection === "asc" ? "Orden ascendente; cambiar a descendente" : "Orden descendente; cambiar a ascendente"}
+                >
+                  {rosterSortDirection === "asc" ? "A–Z ↑" : "Z–A ↓"}
+                </button>
+              </div>
+              <p className="roster-results-count" aria-live="polite">
+                {visibleRoster.length} {visibleRoster.length === 1 ? "personaje" : "personajes"}
+                {rosterRoleFilter !== "all" ? ` · ${rosterRoleFilter === "tank" ? "Tanques" : rosterRoleFilter === "heal" ? "Sanadores" : "DPS"}` : " en la plantilla"}
+              </p>
+              {visibleRoster.length === 0 ? (
+                <p className="demo-note">No hay miembros que coincidan con esos filtros.</p>
+              ) : (
+                <div className="roster-table-wrap">
+                  <table className="roster-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Personaje</th>
+                        <th scope="col">Rol</th>
+                        <th scope="col">Clase</th>
+                        <th scope="col">Especialización</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {visibleRoster.map((character) => {
+                        const roleKey = normalizeRole(character.role);
+                        const classKey = normalizeClass(character.class_name);
+                        const RoleIcon = roleKey === "tank" ? Shield : roleKey === "heal" ? HeartPulse : Swords;
+                        return (
+                          <tr key={character.id}>
+                            <td className="roster-character-name">{character.character_name}</td>
+                            <td>
+                              <span className={`roster-role roster-role-${roleKey}`}>
+                                <RoleIcon size={16} aria-hidden="true" />
+                                <span>{roleLabel(roleKey)}</span>
+                              </span>
+                            </td>
+                            <td>
+                              <span className="roster-class-cell">
+                                <img
+                                  className="roster-class-icon"
+                                  src={CLASS_ICON_URLS[classKey] ?? ""}
+                                  alt=""
+                                  loading="lazy"
+                                  onError={(event) => { event.currentTarget.style.visibility = "hidden"; }}
+                                />
+                                <span>{character.class_name}</span>
+                              </span>
+                            </td>
+                            <td className="roster-specialization">{character.specialization?.trim() || "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </section>
 
