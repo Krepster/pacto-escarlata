@@ -267,7 +267,7 @@ function PublicSite() {
         >
           <span className="brand-mark">
             <Shield size={28} strokeWidth={1.6} />
-            <img src="/media/pacto_escarlata_logo.png" alt="Pacto Escarlata" className="brand-logo" />
+            <img src="/public/media/pacto_fav.png" alt="Pacto Escarlata" className="brand-logo" />
           </span>
 
           <span className="brand-copy">
@@ -576,29 +576,19 @@ function PublicSite() {
       </main>
 
       <footer className="footer">
-        <a className="brand footer-brand" href="#inicio">
-          <span className="brand-mark">
-            <Shield size={23} />
-            <span>✠</span>
-          </span>
-
-          <span className="brand-copy">
-            <strong>
-              PACTO <em>ESCARLATA</em>
-            </strong>
-            <small>UNIDOS POR AZEROTH</small>
-          </span>
-        </a>
-
-        <p>Por la Alianza. Por la hermandad. Por el pacto.</p>
-
-        <div className="api-status">
-          <span
-            className={apiOnline ? "status-dot online" : "status-dot"}
-          />
-          API {apiOnline ? "conectada" : "en preparación"}
-        </div>
-
+        <p
+            style={{
+              gridColumn: "1 / -1",
+              width: "100%",
+              margin: 0,
+              textAlign: "center",
+              color: "#b9afb2",
+              fontSize: "11px",
+              lineHeight: 1.6,
+            }}
+          >
+            Por la Alianza. Por la hermandad. Por el pacto.
+        </p>
         <small className="legal">
           Proyecto comunitario no oficial. World of Warcraft y sus
           marcas pertenecen a sus respectivos propietarios.
