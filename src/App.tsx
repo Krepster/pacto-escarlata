@@ -267,7 +267,7 @@ function PublicSite() {
         >
           <span className="brand-mark">
             <Shield size={28} strokeWidth={1.6} />
-            <span>✠</span>
+            <img src="/media/pacto_escarlata_logo.png" alt="Pacto Escarlata" className="brand-logo" />
           </span>
 
           <span className="brand-copy">
